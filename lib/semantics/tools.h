@@ -175,6 +175,15 @@ const DeclTypeSpec &FindOrInstantiateDerivedType(Scope &, DerivedTypeSpec &&,
     SemanticsContext &, DeclTypeSpec::Category = DeclTypeSpec::TypeDerived);
 void ProcessParameterExpressions(DerivedTypeSpec &, evaluate::FoldingContext &);
 
+// Check to see if a variable being redefined is a DO variable.  If so, emit
+// a message
+void SayDoVarRedefine(
+    const Symbol &, SemanticsContext &, const parser::CharBlock &);
+void CheckDoVarRedefine(
+    const Symbol &, SemanticsContext &, const parser::CharBlock &);
+void CheckDoVarRedefine(const parser::Variable &, SemanticsContext &);
+void CheckDoVarRedefine(const parser::Name &, SemanticsContext &);
+
 // Determines whether an object might be visible outside a
 // PURE function (C1594); returns a non-null Symbol pointer for
 // diagnostic purposes if so.

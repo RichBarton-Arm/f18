@@ -208,6 +208,28 @@ void SemanticsContext::PopConstruct() {
   constructStack_.pop_back();
 }
 
+void SemanticsContext::ActivateDoVariable(
+    const Symbol *doVariable, const parser::CharBlock location) {
+  activeDoVariables_.emplace(doVariable, location);
+}
+
+void SemanticsContext::DeactivateDoVariable(const Symbol *doVariable) {
+  activeDoVariables_.erase(doVariable);
+}
+
+bool SemanticsContext::IsActiveDoVariable(const Symbol *variable) {
+  return activeDoVariables_.find(variable) != activeDoVariables_.end();
+}
+
+parser::CharBlock SemanticsContext::GetDoVariableLocation(
+    const Symbol *variable) {
+  if (IsActiveDoVariable(variable)) {
+    return activeDoVariables_[variable];
+  } else {
+    return parser::CharBlock{};
+  }
+}
+
 bool Semantics::Perform() {
   return ValidateLabels(context_, program_) &&
       parser::CanonicalizeDo(program_) &&  // force line break

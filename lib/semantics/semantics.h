@@ -155,6 +155,11 @@ public:
   }
   void PopConstruct();
 
+  void ActivateDoVariable(const Symbol *, const parser::CharBlock);
+  void DeactivateDoVariable(const Symbol *);
+  bool IsActiveDoVariable(const Symbol *);
+  parser::CharBlock GetDoVariableLocation(const Symbol *);
+
 private:
   const common::IntrinsicTypeDefaultKinds &defaultKinds_;
   const common::LanguageFeatureControl languageFeatures_;
@@ -172,6 +177,7 @@ private:
 
   bool CheckError(bool);
   ConstructStack constructStack_;
+  std::map<const Symbol *, const parser::CharBlock> activeDoVariables_;
 };
 
 class Semantics {

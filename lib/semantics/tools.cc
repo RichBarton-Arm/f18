@@ -998,6 +998,37 @@ void ProcessParameterExpressions(
   }
 }
 
+void SayDoVarRedefine(const Symbol &variable, SemanticsContext &context,
+    const parser::CharBlock &location) {
+  const parser::CharBlock doLoc{context.GetDoVariableLocation(&variable)};
+  context.Say(location, "Cannot redefine DO variable"_err_en_US)
+      .Attach(doLoc, "Enclosing DO construct"_en_US);
+}
+
+void CheckDoVarRedefine(const Symbol &variable, SemanticsContext &context,
+    const parser::CharBlock &location) {
+  if (const Symbol * root{GetAssociationRoot(variable)}) {
+    if (context.IsActiveDoVariable(root)) {
+      SayDoVarRedefine(*root, context, location);
+    }
+  }
+}
+
+void CheckDoVarRedefine(
+    const parser::Variable &variable, SemanticsContext &context) {
+  if (const Symbol * entity{GetLastName(variable).symbol}) {
+    const parser::CharBlock &sourceLocation{variable.GetSource()};
+    CheckDoVarRedefine(*entity, context, sourceLocation);
+  }
+}
+
+void CheckDoVarRedefine(const parser::Name &name, SemanticsContext &context) {
+  const parser::CharBlock &sourceLocation{name.source};
+  if (const Symbol * entity{name.symbol}) {
+    CheckDoVarRedefine(*entity, context, sourceLocation);
+  }
+}
+
 const DeclTypeSpec &FindOrInstantiateDerivedType(Scope &scope,
     DerivedTypeSpec &&spec, SemanticsContext &semanticsContext,
     DeclTypeSpec::Category category) {

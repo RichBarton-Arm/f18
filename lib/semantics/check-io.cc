@@ -507,10 +507,22 @@ void IoChecker::Leave(const parser::PrintStmt &) {
   stmt_ = IoStmtKind::None;
 }
 
-void IoChecker::Leave(const parser::ReadStmt &) {
+static void CheckForDoVariable(
+    const parser::ReadStmt &readStmt, SemanticsContext &context) {
+  const std::list<parser::InputItem> &items{readStmt.items};
+  for (const auto &item : items) {
+    if (const parser::Variable *
+        variable{std::get_if<parser::Variable>(&item.u)}) {
+      CheckDoVarRedefine(*variable, context);
+    }
+  }
+}
+
+void IoChecker::Leave(const parser::ReadStmt &readStmt) {
   if (!flags_.test(Flag::InternalUnit)) {
     CheckForPureSubprogram();
   }
+  CheckForDoVariable(readStmt, context_);
   if (!flags_.test(Flag::IoControlList)) {
     return;
   }

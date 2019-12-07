@@ -30,6 +30,27 @@ namespace Fortran::semantics {
 
 using namespace parser::literals;
 
+using Bounds = parser::LoopControl::Bounds;
+
+static const std::list<parser::ConcurrentControl> &GetControls(
+    const parser::LoopControl &loopControl) {
+  const auto &concurrent{
+      std::get<parser::LoopControl::Concurrent>(loopControl.u)};
+  const auto &header{std::get<parser::ConcurrentHeader>(concurrent.t)};
+  return std::get<std::list<parser::ConcurrentControl>>(header.t);
+}
+
+static const Bounds &GetBounds(const parser::DoConstruct &doConstruct) {
+  auto &loopControl{doConstruct.GetLoopControl().value()};
+  return std::get<Bounds>(loopControl.u);
+}
+
+static const parser::Name &GetDoVariable(
+    const parser::DoConstruct &doConstruct) {
+  const Bounds &bounds{GetBounds(doConstruct)};
+  return bounds.name.thing;
+}
+
 // Return the (possibly null)  name of the construct
 template<typename A>
 static const parser::Name *MaybeGetConstructName(const A &a) {
@@ -434,6 +455,40 @@ class DoContext {
 public:
   DoContext(SemanticsContext &context) : context_{context} {}
 
+  // Mark this DO construct as a point of definition for the DO variables
+  // or index-names it contains.  If they're already defined, emit an error
+  // message.  We need to remember both the variable and the source location of
+  // the variable in the DO construct so that we can remove it when we leave
+  // the DO construct and use its location in error messages.
+  void DefineDoVariables(const parser::DoConstruct &doConstruct) {
+    if (doConstruct.IsDoNormal()) {
+      DefineDoName(GetDoVariable(doConstruct));
+    } else if (doConstruct.IsDoConcurrent()) {
+      auto &loopControl{doConstruct.GetLoopControl()};
+      if (loopControl) {
+        const auto &controls{GetControls(*loopControl)};
+        for (const parser::ConcurrentControl &control : controls) {
+          DefineDoName(std::get<parser::Name>(control.t));
+        }
+      }
+    }
+  }
+
+  // Called at the end of a DO construct to deactivate the DO construct
+  void ResetDoVariables(const parser::DoConstruct &doConstruct) {
+    if (doConstruct.IsDoNormal()) {
+      ResetDoName(GetDoVariable(doConstruct));
+    } else if (doConstruct.IsDoConcurrent()) {
+      auto &loopControl{doConstruct.GetLoopControl()};
+      if (loopControl) {
+        const auto &controls{GetControls(*loopControl)};
+        for (const parser::ConcurrentControl &control : controls) {
+          ResetDoName(std::get<parser::Name>(control.t));
+        }
+      }
+    }
+  }
+
   void Check(const parser::DoConstruct &doConstruct) {
     if (doConstruct.IsDoConcurrent()) {
       CheckDoConcurrent(doConstruct);
@@ -447,11 +502,26 @@ public:
   }
 
 private:
-  using Bounds = parser::LoopControl::Bounds;
+  void DefineDoName(const parser::Name &name) {
+    if (Symbol * doVariable{name.symbol}) {
+      if (const Symbol * root{GetAssociationRoot(*doVariable)}) {
+        if (context_.IsActiveDoVariable(root)) {
+          SayDoVarRedefine(*root, context_, name.source);
+        } else {
+          context_.ActivateDoVariable(root, name.source);
+        }
+      }
+    }
+  }
 
-  const Bounds &GetBounds(const parser::DoConstruct &doConstruct) {
-    auto &loopControl{doConstruct.GetLoopControl().value()};
-    return std::get<Bounds>(loopControl.u);
+  void ResetDoName(const parser::Name &name) {
+    if (Symbol * doVariable{name.symbol}) {
+      if (const Symbol * root{GetAssociationRoot(*doVariable)}) {
+        if (name.source == context_.GetDoVariableLocation(root)) {
+          context_.DeactivateDoVariable(root);
+        }
+      }
+    }
   }
 
   void SayBadDoControl(parser::CharBlock sourceLocation) {
@@ -719,10 +789,15 @@ private:
   parser::CharBlock currentStatementSourcePosition_;
 };  // class DoContext
 
-// DO loops must be canonicalized prior to calling
-void DoChecker::Leave(const parser::DoConstruct &x) {
+void DoChecker::Enter(const parser::DoConstruct &doConstruct) {
   DoContext doContext{context_};
-  doContext.Check(x);
+  doContext.DefineDoVariables(doConstruct);
+}
+
+void DoChecker::Leave(const parser::DoConstruct &doConstruct) {
+  DoContext doContext{context_};
+  doContext.Check(doConstruct);
+  doContext.ResetDoVariables(doConstruct);
 }
 
 // Return the (possibly null) name of the ConstructNode
@@ -843,6 +918,44 @@ void DoChecker::Enter(const parser::CycleStmt &cycleStmt) {
 // C1167 and C1168 -- Nesting for EXIT statements
 void DoChecker::Enter(const parser::ExitStmt &exitStmt) {
   CheckNesting(StmtType::EXIT, common::GetPtrFromOptional(exitStmt.v));
+}
+
+void DoChecker::Leave(const parser::AssignmentStmt &stmt) {
+  const auto &variable{std::get<parser::Variable>(stmt.t)};
+  CheckDoVarRedefine(variable, context_);
+}
+
+void DoChecker::Leave(const parser::ConnectSpec &connectSpec) {
+  const auto *newunit{
+      std::get_if<parser::ConnectSpec::Newunit>(&connectSpec.u)};
+  if (newunit) {
+    CheckDoVarRedefine(newunit->v.thing.thing, context_);
+  }
+}
+
+void DoChecker::Leave(const parser::InquireSpec &inquireSpec) {
+  const auto *intVar{std::get_if<parser::InquireSpec::IntVar>(&inquireSpec.u)};
+  if (intVar) {
+    const auto &scalar{std::get<parser::ScalarIntVariable>(intVar->t)};
+    CheckDoVarRedefine(scalar.thing.thing, context_);
+  }
+}
+
+void DoChecker::Leave(const parser::IoControlSpec &ioControlSpec) {
+  const auto *size{std::get_if<parser::IoControlSpec::Size>(&ioControlSpec.u)};
+  if (size) {
+    CheckDoVarRedefine(size->v.thing.thing, context_);
+  }
+}
+
+void DoChecker::Leave(const parser::OutputImpliedDo &outputImpliedDo) {
+  const auto &control{std::get<parser::IoImpliedDoControl>(outputImpliedDo.t)};
+  const parser::Name &name{control.name.thing.thing};
+  CheckDoVarRedefine(*name.symbol, context_, name.source);
+}
+
+void DoChecker::Leave(const parser::StatVariable &statVariable) {
+  CheckDoVarRedefine(statVariable.v.thing.thing, context_);
 }
 
 }  // namespace Fortran::semantics
